@@ -1,0 +1,2 @@
+# Ensure shell scripts keep Unix line endings (avoids /bin/bash^M under WSL/Linux)
+*.sh text eol=lf
