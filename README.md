@@ -157,11 +157,13 @@ powershell\copy-to-aws.ps1 [options] <file1> [file2 ...]
 **Environment variables:** `VM_DNS_NAME`, `SSH_KEY_PATH`, `TARGET_FOLDER`
 
 **Defaults:**
+
 - VM_DNS_NAME: `ec2-18-116-69-17.us-east-2.compute.amazonaws.com`
 - SSH_KEY_PATH: `~/.ssh/Neumann_v1.0_API.pem`
 - TARGET_FOLDER: `/home/ec2-user/deployment`
 
 **Features:**
+
 - Automatically sets executable permissions for .sh and .bash files
 - Uses SSH/cat for text file transfers
 - Creates target directory if it doesn't exist
@@ -203,6 +205,7 @@ powershell\remote-copy.ps1 -DnsName <dns-name> [options] <file1> [file2 ...]
 **Environment variables:** `REMOTE_DNS_NAME`, `SSH_KEY_PATH`, `TARGET_FOLDER`, `REMOTE_USER`
 
 **Defaults:**
+
 - TARGET_FOLDER: `/home/ec2-user/deployment`
 - REMOTE_USER: `ec2-user`
 
@@ -229,4 +232,4 @@ powershell\remote-copy.ps1 -DnsName "server.example.com" -Debug -SshKey "~/.ssh/
 
 ## License
 
-This repository private.
+This repository is private.
