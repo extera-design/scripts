@@ -1,9 +1,10 @@
 # Scripts
 
-The scripts in this repository are used to simplify various tasks. Scripts are organized into two folders:
+The scripts in this repository are used to simplify various tasks. Scripts are organized into folders:
 
 - **bash/**: Shell scripts for Linux/Unix environments
 - **powershell/**: PowerShell scripts for Windows environments
+- **py/**: Python scripts used by helper wrappers and tooling
 
 ## Available Scripts
 
@@ -13,11 +14,16 @@ The scripts in this repository are used to simplify various tasks. Scripts are o
 - `remote-copy.sh`: Copies files to a remote SSH server with advanced options.
 - `db.sh`: Finds and updates documents in a MongoDB container.
 - `services.sh`: Starts and stops application services (API, solver, MongoDB, ngrok).
+- `generate-vscode-inventory.sh`: Generates CSV inventory files from `.vscode/tasks.json` and `.vscode/launch.json` files, detailing VS Code task and launch configurations.
 
 ### PowerShell Scripts (powershell/)
 
 - `copy-to-aws.ps1`: Copies files to an AWS VM (PowerShell version).
 - `remote-copy.ps1`: Copies files to a remote SSH server with advanced options (PowerShell version).
+
+### Python Scripts (py/)
+
+- `generate-vscode-inventory.py`: Generates CSV inventory files from discovered VS Code task and launch configurations.
 
 ## Usage
 
@@ -137,6 +143,37 @@ bash/services.sh stop
 bash/services.sh stopAll
 ```
 
+#### `generate-vscode-inventory.sh`
+
+Generates CSV inventory files from `.vscode/tasks.json` and `.vscode/launch.json` files found under a root path. This script is a wrapper around `py/generate-vscode-inventory.py`.
+
+```bash
+bash/generate-vscode-inventory.sh [options]
+```
+
+**Options:**
+
+- `-r, --root <path>` - Root directory to scan recursively for VS Code projects (default: current directory)
+- `-h, --help` - Show help and exit
+
+**Forwarded options (to Python script):**
+
+- `--task-output <path>` - Output path for task inventory CSV (default: `task_inventory.csv`)
+- `--launch-output <path>` - Output path for launch inventory CSV (default: `launch_inventory.csv`)
+
+**Examples:**
+
+```bash
+# Generate inventories for current directory
+bash/generate-vscode-inventory.sh
+
+# Generate inventories for a specific root
+bash/generate-vscode-inventory.sh --root /path/to/workspaces
+
+# Write output files to test/output
+bash/generate-vscode-inventory.sh --task-output test/output/task_inventory.csv --launch-output test/output/launch_inventory.csv
+```
+
 ### PowerShell Scripts
 
 #### `copy-to-aws.ps1`
@@ -228,6 +265,33 @@ powershell\remote-copy.ps1 -DnsName "server.example.com" -RemoteUser admin -Targ
 
 # Enable debug mode for troubleshooting SSH issues
 powershell\remote-copy.ps1 -DnsName "server.example.com" -Debug -SshKey "~/.ssh/mykey.pem" script.sh
+```
+
+### Python Scripts
+
+#### `generate-vscode-inventory.py`
+
+Generates CSV inventory files from `.vscode/tasks.json` and `.vscode/launch.json` files found recursively under a root directory.
+
+```bash
+python3 py/generate-vscode-inventory.py [options]
+```
+
+**Options:**
+
+- `--root <path>` - Root directory to scan recursively for VS Code projects
+- `--task-output <path>` - Output path for task inventory CSV (default: `task_inventory.csv`)
+- `--launch-output <path>` - Output path for launch inventory CSV (default: `launch_inventory.csv`)
+- `-h, --help` - Show help and exit
+
+**Examples:**
+
+```bash
+# Generate inventory files using default output names
+python3 py/generate-vscode-inventory.py --root .
+
+# Generate inventory files into test/output
+python3 py/generate-vscode-inventory.py --root . --task-output test/output/task_inventory.csv --launch-output test/output/launch_inventory.csv
 ```
 
 ## License
