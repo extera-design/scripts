@@ -82,7 +82,7 @@ param(
     [Alias('v')]
     [switch]$VerboseSsh,
 
-    [Parameter(Mandatory=$false, ValueFromRemainingArguments=$true)]
+    [Parameter(Position=0, Mandatory=$false, ValueFromRemainingArguments=$true)]
     [Alias('f')]
     [string[]]$Files,
 
@@ -197,7 +197,8 @@ Note:
 function Get-SshArgs {
     param(
         [string]$SshKeyPath,
-        [bool]$DebugMode = $false
+        [bool]$DebugMode = $false,
+        [bool]$EnableConnectionReuse = $true
     )
 
     $args = @()
@@ -208,6 +209,18 @@ function Get-SshArgs {
 
     if ($DebugMode) {
         $args += '-v'
+    }
+
+    # Enable SSH connection multiplexing to reuse authenticated connections
+    # This reduces password prompts when making multiple SSH calls
+    if ($EnableConnectionReuse) {
+        # Use Windows TEMP directory for control socket (Unix ~/.ssh doesn't work on Windows)
+        $controlPath = Join-Path $env:TEMP "ssh-cm-%r@%h:%p"
+        $args += @(
+            '-o', 'ControlMaster=auto',
+            '-o', "ControlPath=$controlPath",
+            '-o', 'ControlPersist=10'
+        )
     }
 
     return $args
@@ -238,7 +251,17 @@ function Expand-RemoteWildcards {
 
     if ($Pattern -match '[\*\?\[]') {
         Write-Debug-Custom "Expanding wildcard pattern on remote: $Pattern"
-        $result = & ssh @SshArgs "$RemoteUser@$RemoteHost" "ls -1 $Pattern 2>/dev/null"
+        # Escape spaces for bash but preserve glob wildcards (*, ?, [, ])
+        $escapedPattern = $Pattern -replace ' ', '\ '
+        $result = & ssh @SshArgs "$RemoteUser@$RemoteHost" "ls -1 $escapedPattern 2>/dev/null"        
+        # Check for SSH connection failures (exit code 255)
+        if ($LASTEXITCODE -eq 255) {
+            Write-Error-Custom "Failed to connect to remote host: $RemoteHost"
+            Write-Error-Custom "Please check the hostname, network connection, and SSH credentials."
+            exit 1
+        }
+        
+        # If no error but no results, the pattern didn't match any files
         if ($LASTEXITCODE -ne 0 -or -not $result) {
             Write-Warning-Custom "No remote files matched pattern: $Pattern"
             return @()
@@ -259,18 +282,27 @@ function Copy-TextFiles {
         [string[]]$SshArgs
     )
 
-    Write-Log "Copying files from $RemoteUser@$RemoteDns to $LocalTargetFolder"
+    # Resolve the target folder to an absolute path
+    $resolvedLocalPath = (Resolve-Path -Path $LocalTargetFolder).Path
+    Write-Log "Copying files from $RemoteUser@$RemoteDns to $resolvedLocalPath"
 
     foreach ($remotePath in $FilesToCopy) {
         $fileName = $remotePath.Split('/')[-1]
-        $localPath = Join-Path $LocalTargetFolder $fileName
+        $localPath = Join-Path $resolvedLocalPath $fileName
 
+        Write-Debug-Custom "Remote path: $remotePath"
+        Write-Debug-Custom "File name: $fileName"
+        Write-Debug-Custom "Local path: $localPath"
         Write-Debug-Custom "SSH Command: ssh $($SshArgs -join ' ') $RemoteUser@$RemoteDns `"cat '$remotePath'`""
         $content = & ssh @SshArgs "$RemoteUser@$RemoteDns" "cat '$remotePath'"
 
         if ($LASTEXITCODE -ne 0) {
-            Write-Error-Custom "Failed to copy: $remotePath"
+            Write-Error-Custom "Failed to copy: $remotePath (Exit code: $LASTEXITCODE)"
             exit 1
+        }
+
+        if (-not $content) {
+            Write-Warning-Custom "No content received from remote file: $remotePath"
         }
 
         # Write with LF line endings; normalize any CRLF content from the source
@@ -278,9 +310,17 @@ function Copy-TextFiles {
         if ($normalizedContent.Length -gt 0) {
             $normalizedContent += "`n"
         }
+        
+        Write-Debug-Custom "Writing $($normalizedContent.Length) bytes to: $localPath"
         [System.IO.File]::WriteAllText($localPath, $normalizedContent, [System.Text.Encoding]::UTF8)
-
-        Write-Log "Copied: $remotePath"
+        
+        if (Test-Path -LiteralPath $localPath) {
+            $fileInfo = Get-Item -LiteralPath $localPath
+            Write-Log "Copied: $remotePath -> $($fileInfo.FullName) ($($fileInfo.Length) bytes)"
+        } else {
+            Write-Warning-Custom "File not found after write: $localPath"
+            Write-Log "Copied: $remotePath"
+        }
     }
 
     Write-Success "All files copied successfully from $RemoteDns"
@@ -374,7 +414,8 @@ function Main {
     }
 
     # Build SSH arguments
-    $sshArgs = Get-SshArgs -SshKeyPath $resolvedSshKeyPath -DebugMode $VerboseSsh
+    # Note: Connection reuse disabled on Windows - OpenSSH for Windows doesn't support ControlMaster
+    $sshArgs = Get-SshArgs -SshKeyPath $resolvedSshKeyPath -DebugMode $VerboseSsh -EnableConnectionReuse $false
 
     Write-Title "Starting file copy from remote machine: $resolvedDnsName"
 

@@ -274,8 +274,26 @@ expand_remote_wildcards() {
 
   if [[ "$pattern" == *[\*\?\[]* ]]; then
     debug "Expanding wildcard pattern on remote: $pattern"
-    # Pass the pattern unquoted so the remote shell expands it
-    ssh "${SSH_ARGS[@]}" "$REMOTE_USER@$REMOTE_DNS_NAME" "ls -1 $pattern 2>/dev/null"
+    # Escape spaces in the pattern for the remote shell
+    local escaped_pattern="${pattern// /\\ }"
+    # Pass the escaped pattern so the remote shell expands it correctly
+    local result
+    result=$(ssh "${SSH_ARGS[@]}" "$REMOTE_USER@$REMOTE_DNS_NAME" "ls -1 $escaped_pattern 2>/dev/null")
+    local exit_code=$?
+    
+    # Check for connection failure (exit code 255)
+    if [[ $exit_code -eq 255 ]]; then
+      error "Failed to connect to remote host: $REMOTE_DNS_NAME"
+      exit 1
+    fi
+    
+    # Check if no files matched
+    if [[ -z "$result" ]]; then
+      warning "No files matched pattern: $pattern"
+      return
+    fi
+    
+    echo "$result"
   else
     echo "$pattern"
   fi
