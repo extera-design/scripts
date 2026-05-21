@@ -30,7 +30,7 @@
 .PARAMETER NoConnectionReuse
     Disable SSH connection multiplexing
 
-.PARAMETER Debug
+.PARAMETER VerboseSsh
     Enable verbose SSH output
 
 .PARAMETER Files
@@ -55,7 +55,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$false)]
-    [Alias('v')]
+    [Alias('d')]
     [string]$DnsName,
 
     [Parameter(Mandatory=$false)]
@@ -87,10 +87,11 @@ param(
     [switch]$NoConnectionReuse,
 
     [Parameter(Mandatory=$false)]
-    [Alias('d')]
-    [switch]$Debug,
+    [Alias('v')]
+    [switch]$VerboseSsh,
 
     [Parameter(Mandatory=$false, ValueFromRemainingArguments=$true)]
+    [Alias('f')]
     [string[]]$Files,
 
     [Parameter(Mandatory=$false)]
@@ -136,7 +137,7 @@ function Write-Title {
 
 function Write-Debug-Custom {
     param([string]$Message)
-    if ($Debug) {
+    if ($VerboseSsh) {
         Write-Host "[DEBUG] $Message" -ForegroundColor Cyan
     }
 }
@@ -153,7 +154,7 @@ Usage:
   .\remote-copy.ps1 -DnsName <dns-name> [options] <file1> [file2 ...]
 
 Options:
-  -DnsName, -v <dns-name>           DNS name of the remote machine where the files will
+  -DnsName, -d <dns-name>           DNS name of the remote machine where the files will
                                     be copied (overrides REMOTE_DNS_NAME)
   -RemoteUser, -u <username>        Remote SSH username (overrides REMOTE_USER)
   -SshKey, -k <path>                Optional flag to provide the path to the SSH private key
@@ -172,7 +173,7 @@ Options:
                                     all ssh/scp calls to minimize password prompts.
                                     Use this flag to create separate connections
                                     (default: false)
-  -Debug, -d                        Enable verbose output for ssh/scp commands to help
+  -VerboseSsh, -v                   Enable verbose output for ssh/scp commands to help
                                     diagnose authentication and key issues
                                     (default: false)
   -Help, -h                         Show this help and exit
@@ -269,17 +270,24 @@ function Copy-TextFiles {
         $fileName = Split-Path $file -Leaf
         $remotePath = "$TargetFolder/$fileName"
         
-        # Copy file using cat over SSH
-        Get-Content $file -Raw | & ssh @SshArgs "$RemoteUser@$RemoteDns" "cat > $remotePath"
+        # Copy file using scp, then convert CRLF to LF on the remote server
+        & scp @SshArgs $file "$RemoteUser@$RemoteDns`:$remotePath"
         
         if ($LASTEXITCODE -ne 0) {
             Write-Error-Custom "Failed to copy file: $file"
             continue
         }
         
+        # Convert CRLF to LF using dos2unix or sed on the remote server
+        $convertCmd = "command -v dos2unix >/dev/null 2>&1 && dos2unix '$remotePath' || sed -i 's/\r$//' '$remotePath'"
+        $exitCode = Invoke-SshCommand -User $RemoteUser -RemoteHost $RemoteDns -Command $convertCmd -SshArgs $SshArgs
+        if ($exitCode -ne 0) {
+            Write-Warning-Custom "Failed to convert line endings for: $file"
+        }
+        
         # Check if it's a shell script and make it executable
         if ($file -match '\.(sh|bash)$') {
-            $exitCode = Invoke-SshCommand -User $RemoteUser -RemoteHost $RemoteDns -Command "chmod +x $remotePath" -SshArgs $SshArgs
+            $exitCode = Invoke-SshCommand -User $RemoteUser -RemoteHost $RemoteDns -Command "chmod +x '$remotePath'" -SshArgs $SshArgs
             if ($exitCode -ne 0) {
                 Write-Warning-Custom "Failed to set executable permissions on: $file"
             }
@@ -313,7 +321,7 @@ function Copy-BinaryFiles {
         
         # Copy file using SCP
         Write-Debug-Custom "SCP Command: scp $($SshArgs -join ' ') $file $RemoteUser@$RemoteDns`:$TargetFolder/"
-        & scp @SshArgs $file "$RemoteUser@$RemoteDns`:$TargetFolder/"
+        & scp @SshArgs $file "$RemoteUser@$RemoteDns`:'$TargetFolder/'"
         
         if ($LASTEXITCODE -ne 0) {
             Write-Error-Custom "Failed to copy binary file: $file"
@@ -323,7 +331,7 @@ function Copy-BinaryFiles {
         # Set executable permissions if requested
         if ($MakeExecutable) {
             $remotePath = "$TargetFolder/$fileName"
-            $exitCode = Invoke-SshCommand -User $RemoteUser -RemoteHost $RemoteDns -Command "chmod +x $remotePath" -SshArgs $SshArgs
+            $exitCode = Invoke-SshCommand -User $RemoteUser -RemoteHost $RemoteDns -Command "chmod +x '$remotePath'" -SshArgs $SshArgs
             if ($exitCode -ne 0) {
                 Write-Warning-Custom "Failed to set executable permissions on: $file"
             }
@@ -438,12 +446,12 @@ function Main {
     }
 
     # Build SSH arguments
-    $sshArgs = Get-SshArgs -SshKeyPath $resolvedSshKeyPath -DebugMode $Debug
+    $sshArgs = Get-SshArgs -SshKeyPath $resolvedSshKeyPath -DebugMode $VerboseSsh
 
     Write-Title "Starting file copy to remote machine: $resolvedDnsName"
 
     # Create target directory on remote server
-    $exitCode = Invoke-SshCommand -User $resolvedRemoteUser -RemoteHost $resolvedDnsName -Command "mkdir -p $resolvedTargetFolder" -SshArgs $sshArgs
+    $exitCode = Invoke-SshCommand -User $resolvedRemoteUser -RemoteHost $resolvedDnsName -Command "mkdir -p '$resolvedTargetFolder'" -SshArgs $sshArgs
     if ($exitCode -ne 0) {
         Write-Error-Custom "Failed to create target directory on remote server"
         exit 1
