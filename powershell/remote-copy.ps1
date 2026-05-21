@@ -34,7 +34,7 @@
     Enable verbose SSH output
 
 .PARAMETER Files
-    Files to copy to the remote server
+    Files to copy to the remote server. Supports wildcard patterns (e.g., *.sh, config*.json)
 
 .PARAMETER Help
     Show help message
@@ -44,6 +44,12 @@
 
 .EXAMPLE
     .\remote-copy.ps1 -DnsName "server.example.com" -Binary -Executable -RestartService myapp app.exe
+
+.EXAMPLE
+    .\remote-copy.ps1 -DnsName "server.example.com" *.sh
+
+.EXAMPLE
+    .\remote-copy.ps1 -DnsName "server.example.com" -Binary -Executable *.exe *.dll
 
 .NOTES
     Environment variables:
@@ -184,7 +190,9 @@ Mandatory arguments:
     -DnsName, -v <dns-name>         DNS name of the remote machine (can also be set via
                                     the REMOTE_DNS_NAME env variable)
 
-  At least one file to copy must be provided as a positional argument.
+  At least one file to copy must be provided as a positional argument. File arguments
+  can include wildcard patterns (e.g., *.sh, config*.json, file?.txt) which will be
+  expanded to match all files in the current directory.
 
 Environment variables:
   REMOTE_DNS_NAME, SSH_KEY_PATH, TARGET_FOLDER, REMOTE_USER
@@ -211,6 +219,9 @@ Note:
   permissions on the remote file after copying.
   - If the -Binary flag is not set, the script will identify shell scripts and set
   executable permissions on the remote file after copying.
+  - File arguments support wildcard patterns (*, ?, []) for matching multiple files.
+    Examples: *.sh (all .sh files), config*.json (files starting with 'config'),
+    file[123].txt (file1.txt, file2.txt, file3.txt).
 "@
 }
 #endregion
@@ -445,6 +456,50 @@ function Main {
         exit 1
     }
 
+    # Expand wildcards in file patterns
+    Write-Debug-Custom "Expanding file patterns..."
+    $expandedFiles = @()
+    foreach ($filePattern in $Files) {
+        if ($filePattern -match '[\*\?\[]') {
+            # Pattern contains wildcards, expand it
+            Write-Debug-Custom "Expanding pattern: $filePattern"
+            try {
+                $matchedFiles = Get-ChildItem -Path $filePattern -File -ErrorAction Stop
+                if ($matchedFiles) {
+                    $expandedFiles += $matchedFiles.FullName
+                    Write-Debug-Custom "Pattern '$filePattern' matched $($matchedFiles.Count) file(s)"
+                } else {
+                    Write-Warning-Custom "No files matched pattern: $filePattern"
+                }
+            } catch {
+                Write-Warning-Custom "Failed to expand pattern '$filePattern': $($_.Exception.Message)"
+            }
+        } else {
+            # No wildcard, treat as literal file
+            $expandedFiles += $filePattern
+        }
+    }
+
+    # Check if we found any files after expansion
+    if ($expandedFiles.Count -eq 0) {
+        Write-Error-Custom "No files found after expanding patterns"
+        exit 1
+    }
+
+    # Validate all expanded files exist
+    $validFiles = @()
+    foreach ($file in $expandedFiles) {
+        if (Test-Path $file -PathType Leaf) {
+            $validFiles += $file
+            Write-Debug-Custom "Validated file: $file"
+        } else {
+            Write-Error-Custom "File not found: $file"
+            exit 1
+        }
+    }
+
+    Write-Log "Found $($validFiles.Count) file(s) to copy"
+
     # Build SSH arguments
     $sshArgs = Get-SshArgs -SshKeyPath $resolvedSshKeyPath -DebugMode $VerboseSsh
 
@@ -463,13 +518,13 @@ function Main {
             Stop-ServiceIfRunning -RemoteUser $resolvedRemoteUser -RemoteDns $resolvedDnsName -ServiceName $RestartService -SshArgs $sshArgs
         }
         
-        Copy-BinaryFiles -RemoteUser $resolvedRemoteUser -RemoteDns $resolvedDnsName -TargetFolder $resolvedTargetFolder -FilesToCopy $Files -SshArgs $sshArgs -MakeExecutable $Executable
+        Copy-BinaryFiles -RemoteUser $resolvedRemoteUser -RemoteDns $resolvedDnsName -TargetFolder $resolvedTargetFolder -FilesToCopy $validFiles -SshArgs $sshArgs -MakeExecutable $Executable
         
         if ($RestartService) {
             Start-ServiceRemote -RemoteUser $resolvedRemoteUser -RemoteDns $resolvedDnsName -ServiceName $RestartService -SshArgs $sshArgs
         }
     } else {
-        Copy-TextFiles -RemoteUser $resolvedRemoteUser -RemoteDns $resolvedDnsName -TargetFolder $resolvedTargetFolder -FilesToCopy $Files -SshArgs $sshArgs
+        Copy-TextFiles -RemoteUser $resolvedRemoteUser -RemoteDns $resolvedDnsName -TargetFolder $resolvedTargetFolder -FilesToCopy $validFiles -SshArgs $sshArgs
     }
 }
 #endregion
